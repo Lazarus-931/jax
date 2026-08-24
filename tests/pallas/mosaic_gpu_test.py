@@ -3735,7 +3735,7 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
   @parameterized.product(
       op=(lax.cumsum, lax.cummax, lax.cummin),
       axis=(0, 1),
-      dtype=(jnp.float32, jnp.int32),
+      dtype=(jnp.float32, jnp.int32, jnp.float16, jnp.bfloat16),
   )
   def test_cumulative_with_layout(self, op, axis, dtype):
     shape = (128, 128)
@@ -3745,12 +3745,17 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
       o_ref[...] = op(x_val, axis=axis)
 
-    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    if dtype in (jnp.float16, jnp.bfloat16):
+      # bfloat16 represents integers exactly only up to 256, so keep every
+      # partial sum small.
+      x = np.random.default_rng(0).integers(-1, 2, size=shape).astype(dtype)
+    else:
+      x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
     expected = {
         lax.cumsum: np.cumsum,
         lax.cummax: np.maximum.accumulate,
         lax.cummin: np.minimum.accumulate,
-    }[op](x, axis=axis).astype(dtype)
+    }[op](x.astype(np.float64), axis=axis).astype(dtype)
     np.testing.assert_array_equal(kernel(x), expected)
 
   @parameterized.product(axis=(0, 1))
