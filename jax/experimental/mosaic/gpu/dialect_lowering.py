@@ -924,6 +924,58 @@ def _vector_multi_dim_reduction_op_lowering_rule(
   return [fragmented_array_to_ir(result, op.result.type)]
 
 
+@_register_lowering(vector.ScanOp)
+def _vector_scan_op_lowering_rule(
+    ctx: LoweringContext, op: vector.ScanOp
+) -> Sequence[ir.Value]:
+  [in_layout, init_layout] = inference_utils.in_layouts(op)
+  [dest_layout, acc_layout] = inference_utils.out_layouts(op)
+  if dest_layout != in_layout:
+    raise ValueError(
+        f"Scan result layout {dest_layout} must match the source layout"
+        f" {in_layout}"
+    )
+  if acc_layout != init_layout:
+    raise ValueError(
+        f"Accumulated value layout {acc_layout} must match the initial value"
+        f" layout {init_layout}"
+    )
+  if not ir.BoolAttr(op.inclusive).value:
+    raise NotImplementedError("Exclusive scans are not supported")
+
+  op_kind = _combining_kind(op.kind)
+  is_signed = _is_reduction_signed(op_kind)
+  src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+
+  if not isinstance(src.layout, fa.TiledLayout):
+    raise NotImplementedError(f"Unsupported layout: {src.layout}")
+  scan_dim = ir.IntegerAttr(op.reduction_dim).value
+  scanned_dim = src.layout.tiling.tile_dimension(scan_dim)
+  if any(scanned_dim[d] for d in src.layout.partitioned_warp_dims):
+    dtype = op.source.type.element_type
+    allocation_size = ir.IntegerAttr(op.attributes["scratch_size"]).value * 8 // utils.bitwidth(dtype)
+    scratch = _slice_smem(
+        ir.MemRefType.get([allocation_size], dtype, memory_space=utils.smem()),
+        ir.IntegerAttr(op.attributes["offset"]).value,
+        ctx.smem_requested_bytes,
+    )
+  else:
+    scratch = None
+  match op_kind:
+    case vector.CombiningKind.ADD:
+      result = src.scan("add", scan_dim, scratch)
+    case vector.CombiningKind.MUL:
+      result = src.scan("prod", scan_dim, scratch)
+    case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
+      result = src.scan("max", scan_dim, scratch)
+    case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
+      result = src.scan("min", scan_dim, scratch)
+    case _:
+      raise NotImplementedError(f"Unsupported scan kind: {op.kind}")
+  assert result.layout == layouts_lib.from_layout_attr(dest_layout)
+  return [fragmented_array_to_ir(result, op.dest.type)]
+
+
 @_register_lowering(mgpu.LayoutCastOp)
 def _mgpu_layout_cast_op_lowering_rule(
     _: LoweringContext, op: mgpu.LayoutCastOp

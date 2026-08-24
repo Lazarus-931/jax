@@ -1262,6 +1262,40 @@ def _vector_reduction_constraint_system(
   return cs.ConstraintSystem(), {in_variable: [in_variable.key]}
 
 
+@_add_constraint_system_derivation_rule(vector.ScanOp)
+def _vector_scan_constraint_system(
+    ctx: DerivationContext,
+    op: vector.ScanOp,
+) -> ConstraintSystemDerivationRuleResult:
+  del ctx
+  source = ValueSite(op, VariableType.OPERAND, 0)
+  initial_value = ValueSite(op, VariableType.OPERAND, 1)
+  dest = ValueSite(op, VariableType.RESULT, 0)
+  accumulated_value = ValueSite(op, VariableType.RESULT, 1)
+  source_variable = cs.Variable(source)
+  acc_variable = cs.Variable(accumulated_value)
+  constraints = [
+      cs.NotOfType(source_variable, fa.WGStridedFragLayout),
+      cs.Equals(
+          acc_variable,
+          cs.Reduce(
+              source_variable,
+              (ir.IntegerAttr(op.reduction_dim).value,),
+              rank=len(source.shape),
+          ),
+      ),
+  ]
+  return (
+      cs.ConstraintSystem(constraints=constraints),
+      # A scan preserves the shape of its operand, so the source and the
+      # scanned result share a single variable, i.e. a single layout.
+      {
+          source_variable: [source, dest],
+          acc_variable: [initial_value, accumulated_value],
+      },
+  )
+
+
 @_add_constraint_system_derivation_rule(vector.MultiDimReductionOp)
 def _multi_dim_reduction_constraint_system(
     ctx: DerivationContext,
