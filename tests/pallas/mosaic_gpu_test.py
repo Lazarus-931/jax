@@ -3730,6 +3730,81 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
     x_result = jax.block_until_ready(kernel(x))
     np.testing.assert_allclose(x_result, op(x, axis=axis), atol=5e-5)
 
+  @parameterized.product(
+      op=(lax.cumsum, lax.cummax, lax.cummin),
+      axis=(0, 1),
+      dtype=(jnp.float32, jnp.int32),
+  )
+  def test_cumulative_with_layout(self, op, axis, dtype):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, dtype))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = op(x_val, axis=axis)
+
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
+    expected = {
+        lax.cumsum: np.cumsum,
+        lax.cummax: np.maximum.accumulate,
+        lax.cummin: np.minimum.accumulate,
+    }[op](x, axis=axis).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.product(axis=(0, 1))
+  def test_cumsum_reverse(self, axis):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = lax.cumsum(x_val, axis=axis, reverse=True)
+
+    x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
+    if self.is_wg_semantics():
+      with self.assertRaisesRegex(
+          NotImplementedError, "Reverse cumulative reductions"
+      ):
+        jax.jit(kernel).lower(x)
+      return
+    expected = np.flip(np.cumsum(np.flip(x, axis), axis=axis), axis)
+    np.testing.assert_array_equal(kernel(x), expected)
+
+  @parameterized.product(axis=(0, 1))
+  def test_cumlogsumexp(self, axis):
+    self.skip_if_wg_semantics()
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = lax.cumlogsumexp(x_val, axis=axis)
+
+    x = jax.random.uniform(
+        jax.random.key(0), shape=shape, dtype=jnp.float32, minval=-4, maxval=4
+    )
+    np.testing.assert_allclose(
+        kernel(x), lax.cumlogsumexp(x, axis=axis), rtol=1e-5, atol=1e-5
+    )
+
+  @parameterized.product(axis=(0, 1))
+  def test_cumprod(self, axis):
+    shape = (128, 128)
+
+    @self.kernel(out_type=jax.ShapeDtypeStruct(shape, jnp.float32))
+    def kernel(x_ref, o_ref):
+      x_val = plgpu.load(x_ref, layout=plgpu.Layout.WGMMA, optimized=False)
+      o_ref[...] = lax.cumprod(x_val, axis=axis)
+
+    rng = np.random.default_rng(1234)
+    targets = rng.integers(-4, 5, size=shape)
+    zeros = np.zeros([1 if i == axis else d for i, d in enumerate(shape)], np.int64)
+    exponents = np.diff(targets, axis=axis, prepend=zeros)
+    x = (2.0 ** exponents).astype(jnp.float32)
+    np.testing.assert_array_equal(
+        kernel(x), (2.0 ** targets).astype(jnp.float32)
+    )
+
   def test_cross_warp_reduction(self):
 
     @self.kernel(
