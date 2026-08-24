@@ -5733,6 +5733,43 @@ class FragmentedArrayTest(TestCase):
         result, np.cumsum(x, axis=axis, dtype=np.int32)
     )
 
+  @parameterized.product(
+      op=("add", "max", "min"),
+      dtype=(jnp.float16, jnp.bfloat16, jnp.float32, jnp.int32),
+      n=(8, 64, 128),
+  )
+  def test_scan_dtypes(self, op, dtype, n):
+    m = 64
+    is_int = jnp.issubdtype(dtype, jnp.integer)
+
+    def kernel(ctx, inp, dst, _):
+      arr = mgpu.FragmentedArray.load_untiled(
+          inp,
+          layout=mgpu.WGMMA_LAYOUT,
+          optimized=False,
+          is_signed=True if is_int else None,
+      )
+      arr.scan(op, axis=1).store_untiled(dst, optimized=False)
+
+    # Values in {-1, 0, 1} keep every partial sum exactly representable even
+    # in bfloat16, whose integers are exact only up to 256.
+    x = np.random.default_rng(1234).integers(-1, 2, size=(m, n)).astype(dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        jax.ShapeDtypeStruct((m, n), dtype),
+        jax.ShapeDtypeStruct((m, n), dtype),
+        (),
+    )(x)
+    ref = {
+        "add": np.cumsum,
+        "max": np.maximum.accumulate,
+        "min": np.minimum.accumulate,
+    }[op]
+    expected = ref(x.astype(np.float64), axis=1).astype(dtype)
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.product(m=(64, 128), n=(8, 16, 64))
   def test_scan_prod(self, m, n):
     def kernel(ctx, inp, dst, _):
