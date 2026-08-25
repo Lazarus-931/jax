@@ -3182,10 +3182,13 @@ class FragmentedArray:
           offset = arith.muli(offset, c(lanes, i32))
         return arith.index_cast(index, offset)
 
-      all_idx = list(np.ndindex(regs_shape))
-      for base in range(0, len(all_idx), capacity):
-        chunk = all_idx[base:base + capacity]
-        utils.warpgroup_barrier()
+      groups: dict[int, list[tuple[int, ...]]] = {}
+      for idx in np.ndindex(regs_shape):
+        groups.setdefault(id(running[idx]), []).append(idx)
+      members_of = {members[0]: members for members in groups.values()}
+      reps = list(members_of)
+      for base in range(0, len(reps), capacity):
+        chunk = reps[base:base + capacity]
         for slot, idx in enumerate(chunk):
           if vector_scanned:
             memref.store(running[idx], scratch, [address(slot, thread)])
@@ -3226,11 +3229,6 @@ class FragmentedArray:
                   op(exclusive, peers[w]),
                   exclusive,
               )
-          value[idx] = arith.select(
-              has_carry,
-              op(value[idx], splat(exclusive, value[idx])),
-              value[idx],
-          )
           peer_order = (
               range(extent - 1, -1, -1) if reverse else range(extent)
           )
@@ -3238,8 +3236,14 @@ class FragmentedArray:
           total = peers[peer_order[0]]
           for w in peer_order[1:]:
             total = op(total, peers[w])
-          running[idx] = total
-      utils.warpgroup_barrier()
+          for member in members_of[idx]:
+            value[member] = arith.select(
+                has_carry,
+                op(value[member], splat(exclusive, value[member])),
+                value[member],
+            )
+            running[member] = total
+        utils.warpgroup_barrier()
 
     for d in scanned_dims:
       if d == layout.vector_dim + rank:
