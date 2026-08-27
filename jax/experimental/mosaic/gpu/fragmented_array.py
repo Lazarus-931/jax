@@ -3580,16 +3580,6 @@ class FragmentedArray:
       vector.store(
           reg, scratch, [as_index(arith.muli(store_idx, c(vec_len, i32)))])
 
-    def scan_stored(
-      reg_ty: ir.VectorType,
-      step_idx: int,
-      lane_idx: ir.Value,
-      swizzle_warp_idx: Callable[[ir.Value], ir.Value]
-    ):
-      assert scratch is not None
-
-
-
     def reduce_stored(
         reg_ty: ir.VectorType,
         step_idx: int,

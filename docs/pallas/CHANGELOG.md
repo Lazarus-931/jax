@@ -28,6 +28,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 * New features
 
+  * Added support for cumulative reductions inside Mosaic GPU kernels:
+    {func}`jax.numpy.cumsum`, {func}`jax.numpy.cumprod`,
+    {func}`jax.lax.cummax`, {func}`jax.lax.cummin` and
+    {func}`jax.lax.cumlogsumexp`.
   * The ``barrier`` argument of
     {func}`jax.experimental.pallas.mosaic_gpu.copy_gmem_to_smem` must now be
     omitted on pre-Hopper GPUs (which use the ``cp.async`` implementation).
