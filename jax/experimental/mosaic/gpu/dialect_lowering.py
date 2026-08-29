@@ -950,6 +950,11 @@ def _vector_scan_op_lowering_rule(
   if not isinstance(src.layout, fa.TiledLayout):
     raise NotImplementedError(f"Unsupported layout: {src.layout}")
   scan_dim = ir.IntegerAttr(op.reduction_dim).value
+  reverse = (
+      ir.BoolAttr(op.attributes["reverse"]).value
+      if "reverse" in op.attributes
+      else False
+  )
   scanned_dim = src.layout.tiling.tile_dimension(scan_dim)
   if any(scanned_dim[d] for d in src.layout.partitioned_warp_dims):
     dtype = op.source.type.element_type
@@ -963,13 +968,13 @@ def _vector_scan_op_lowering_rule(
     scratch = None
   match op_kind:
     case vector.CombiningKind.ADD:
-      result = src.scan("add", scan_dim, scratch)
+      result = src.scan("add", scan_dim, scratch, reverse=reverse)
     case vector.CombiningKind.MUL:
-      result = src.scan("prod", scan_dim, scratch)
+      result = src.scan("prod", scan_dim, scratch, reverse=reverse)
     case vector.CombiningKind.MAXSI | vector.CombiningKind.MAXUI | vector.CombiningKind.MAXIMUMF:
-      result = src.scan("max", scan_dim, scratch)
+      result = src.scan("max", scan_dim, scratch, reverse=reverse)
     case vector.CombiningKind.MINUI | vector.CombiningKind.MINSI | vector.CombiningKind.MINIMUMF:
-      result = src.scan("min", scan_dim, scratch)
+      result = src.scan("min", scan_dim, scratch, reverse=reverse)
     case _:
       raise NotImplementedError(f"Unsupported scan kind: {op.kind}")
   assert result.layout == layouts_lib.from_layout_attr(dest_layout)

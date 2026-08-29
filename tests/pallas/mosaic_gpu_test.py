@@ -3768,12 +3768,6 @@ class PallasCallTest(PallasTest, jtu.CudaArchSpecificTest):
       o_ref[...] = lax.cumsum(x_val, axis=axis, reverse=True)
 
     x = np.arange(math.prod(shape), dtype=jnp.float32).reshape(shape)
-    if self.is_wg_semantics():
-      with self.assertRaisesRegex(
-          NotImplementedError, "Reverse cumulative reductions"
-      ):
-        jax.jit(kernel).lower(x)
-      return
     expected = np.flip(np.cumsum(np.flip(x, axis), axis=axis), axis)
     np.testing.assert_array_equal(kernel(x), expected)
 

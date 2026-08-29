@@ -3496,16 +3496,6 @@ def _cumulative_lowering_rule_wg(
   del params  # Unused.
   [x_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
-  if reverse:
-    raise NotImplementedError("Reverse cumulative reductions are not supported")
-  # `vector.scan` wants an initial value shaped like the operand with the
-  # scanned axis dropped, and that value must be a vector of non-zero rank. A 1D
-  # operand would require a rank-0 initial value, so it is not expressible here.
-  if x_aval.ndim < 2:
-    raise NotImplementedError(
-        "Cumulative reductions with warpgroup semantics require an operand of"
-        " rank 2 or more"
-    )
   kind, identity = _cumulative_kind_and_identity(op, out_aval.dtype)
   x = _ensure_ir_value(x, x_aval.dtype)
   out_type = mgpu_utils.dtype_to_ir_type(out_aval.dtype)
@@ -3516,6 +3506,11 @@ def _cumulative_lowering_rule_wg(
       ir.VectorType.get(init_shape, out_type),
       _ensure_ir_value(identity, out_aval.dtype),
   )
+  if x_aval.ndim < 2:
+    raise NotImplementedError(
+        "Cumulative reductions with warpgroup semantics require an operand of"
+        " rank 2 or more"
+    )
   scan = vector_dialect.ScanOp(
       kind, x, init, axis, True, results=[x.type, init.type]
   )
@@ -3527,6 +3522,7 @@ def _cumulative_lowering_rule_wg(
   scan.attributes["scratch_size"] = i32_attr(
       ctx.module_ctx.reduction_scratch_bytes
   )
+  scan.attributes["reverse"] = ir.BoolAttr.get(reverse)
   return scan.dest
 
 register_lowering_rule(lax.cumsum_p, mgpu.LoweringSemantics.Warpgroup)(
