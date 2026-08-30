@@ -3456,11 +3456,11 @@ register_lowering_rule(lax.cumlogsumexp_p, mgpu.LoweringSemantics.Lane)(
 
 
 _CUMULATIVE_SCAN_KIND = {
-    "add": "add",
-    "prod": "mul",
-    "max": "max",
-    "min": "min",
-    "logaddexp": "logaddexp",
+    "add": "Add",
+    "prod": "Mul",
+    "max": "Max",
+    "min": "Min",
+    "logaddexp": "LogAddExp",
 }
 
 
@@ -3508,7 +3508,7 @@ def _cumulative_lowering_rule_wg(
   x = _ensure_ir_value(x, x_aval.dtype)
   return mgpu.dialect.scan(
       x,
-      kind=mgpu.dialect.ScanKindAttr.get(_CUMULATIVE_SCAN_KIND[op]),
+      kind=mgpu.dialect.ScanKind[_CUMULATIVE_SCAN_KIND[op]],
       dimension=axis,
       reverse=reverse,
       is_signed=jnp.issubdtype(out_aval.dtype, jnp.signedinteger),

@@ -2963,6 +2963,24 @@ class FragmentedArray:
             op = arith.muli
           else:
             raise NotImplementedError(self.mlir_dtype)
+        case "logaddexp":
+          if isinstance(self.mlir_dtype, ir.FloatType):
+            def logaddexp(a, b):
+              delta = arith.subf(a, b)
+              safe = arith.addf(
+                  arith.maximumf(a, b),
+                  mlir_math.log1p(
+                      mlir_math.exp(arith.negf(mlir_math.absf(delta)))
+                  ),
+              )
+              return arith.select(
+                  arith.cmpf(arith.CmpFPredicate.UNO, delta, delta),
+                  arith.addf(a, b),
+                  safe,
+              )
+            op = logaddexp
+          else:
+            raise NotImplementedError(self.mlir_dtype)
         case _:
           raise ValueError(f"Unrecognized scan operator: {op}")
     assert not isinstance(op, str)
@@ -2978,13 +2996,20 @@ class FragmentedArray:
             lane_dims=(-2,),
             vector_dim=-1,
         )
-        return FragmentedArray(
+        scanned = FragmentedArray(
             _registers=self.registers.reshape(
                 layout.registers_shape((math.prod(self.shape),))
             ),
             _layout=layout,
             _is_signed=self.is_signed,
-        ).scan(op, 0, scratch)
+        ).scan(op, 0, scratch, reverse=reverse)
+        # Restore the caller's layout: the reinterpretation above is an
+        # implementation detail and the result must be laid out like the input.
+        return FragmentedArray(
+            _registers=scanned.registers.reshape(self.registers.shape),
+            _layout=self.layout,
+            _is_signed=self.is_signed,
+        )
       case WGSplatFragLayout():
         if splat_scan_op is None:
           raise NotImplementedError(

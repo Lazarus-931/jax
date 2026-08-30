@@ -925,11 +925,11 @@ def _vector_multi_dim_reduction_op_lowering_rule(
 
 
 _SCAN_KIND_TO_OP = {
-    "add": "add",
-    "mul": "prod",
-    "max": "max",
-    "min": "min",
-    "logaddexp": "logaddexp",
+    int(mgpu.ScanKind.Add): "add",
+    int(mgpu.ScanKind.Mul): "prod",
+    int(mgpu.ScanKind.Max): "max",
+    int(mgpu.ScanKind.Min): "min",
+    int(mgpu.ScanKind.LogAddExp): "logaddexp",
 }
 
 
@@ -951,7 +951,7 @@ def _mgpu_scan_op_lowering_rule(
   src = _fragmented_array_from_ir(op.source, in_layout, is_signed)
   dimension = ir.IntegerAttr(op.attributes["dimension"]).value
   reverse = ir.BoolAttr(op.attributes["reverse"]).value
-  kind = _SCAN_KIND_TO_OP[str(mgpu.ScanKindAttr(op.attributes["kind"]))]
+  kind = _SCAN_KIND_TO_OP[ir.IntegerAttr(op.attributes["kind"]).value]
 
   if isinstance(src.layout, fa.WGStridedFragLayout):
     needs_scratch = True
