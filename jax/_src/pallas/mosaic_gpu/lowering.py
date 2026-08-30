@@ -3455,6 +3455,15 @@ register_lowering_rule(lax.cumlogsumexp_p, mgpu.LoweringSemantics.Lane)(
 )
 
 
+_CUMULATIVE_SCAN_KIND = {
+    "add": "add",
+    "prod": "mul",
+    "max": "max",
+    "min": "min",
+    "logaddexp": "logaddexp",
+}
+
+
 def _cumulative_kind_and_identity(
     op: str, dtype: jnp.dtype
 ) -> tuple[vector_dialect.CombiningKind, int | float]:
@@ -3496,35 +3505,22 @@ def _cumulative_lowering_rule_wg(
   del params  # Unused.
   [x_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
-  kind, identity = _cumulative_kind_and_identity(op, out_aval.dtype)
   x = _ensure_ir_value(x, x_aval.dtype)
-  out_type = mgpu_utils.dtype_to_ir_type(out_aval.dtype)
-  init_shape = (*out_aval.shape[:axis], *out_aval.shape[axis + 1 :])
-  # We always scan with the identity, so that the initial value contributes
-  # nothing to the result.
-  init = vector_dialect.broadcast(
-      ir.VectorType.get(init_shape, out_type),
-      _ensure_ir_value(identity, out_aval.dtype),
+  return mgpu.dialect.scan(
+      x,
+      kind=mgpu.dialect.ScanKindAttr.get(_CUMULATIVE_SCAN_KIND[op]),
+      dimension=axis,
+      reverse=reverse,
+      is_signed=jnp.issubdtype(out_aval.dtype, jnp.signedinteger),
+      offset=ctx.module_ctx.smem_used_bytes,
+      # TODO(bchetioui): here, we could just donate all the remaining free SMEM
+      # that we have at this point in time.
+      scratch_size=ctx.module_ctx.reduction_scratch_bytes,
   )
-  if x_aval.ndim < 2:
-    raise NotImplementedError(
-        "Cumulative reductions with warpgroup semantics require an operand of"
-        " rank 2 or more"
-    )
-  scan = vector_dialect.ScanOp(
-      kind, x, init, axis, True, results=[x.type, init.type]
-  )
-  def i32_attr(value: int) -> ir.IntegerAttr:
-    return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), value)
-  scan.attributes["offset"] = i32_attr(ctx.module_ctx.smem_used_bytes)
-  # TODO(bchetioui): here, we could just donate all the remaining free SMEM that
-  # we have at this point in time.
-  scan.attributes["scratch_size"] = i32_attr(
-      ctx.module_ctx.reduction_scratch_bytes
-  )
-  scan.attributes["reverse"] = ir.BoolAttr.get(reverse)
-  return scan.dest
 
+register_lowering_rule(lax.cumlogsumexp_p, mgpu.LoweringSemantics.Warpgroup)(
+    functools.partial(_cumulative_lowering_rule_wg, "logaddexp")
+)
 register_lowering_rule(lax.cumsum_p, mgpu.LoweringSemantics.Warpgroup)(
     functools.partial(_cumulative_lowering_rule_wg, "add")
 )
